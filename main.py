@@ -38,6 +38,14 @@ def convert_chinese_symbols(text):
         text = text.replace(chinese, english)
     return text
 
+# 统一场地名称格式的函数
+def normalize_place_title(title):
+    title = title.replace('场地', '').strip()
+    title = title.replace('号场', '').strip()
+    if not title.endswith('号'):
+        title += '号'
+    return title
+
 # 定义全局的 gym_options 字典
 gym_options = {}
 
@@ -60,9 +68,7 @@ def fetch_gym_data(gym_ids):
                 # 构建 place_mapping
                 place_mapping = {}
                 for place in detail.get('placeList', []):
-                    place_title = place.get('title', '').replace('场地', '').strip()
-                    if not place_title.endswith('号'):
-                        place_title += '号'
+                    place_title = normalize_place_title(place.get('title', ''))
                     place_id = place.get('place_id', '')
                     place_mapping[place_title] = place_id
 
@@ -117,14 +123,7 @@ def submit_form():
     interval_mapping = gym_data["interval_mapping"]
 
     # 确保用户输入的场地号有效，并自动添加 "号"
-    if not place_title_input.endswith("号"):
-        if place_title_input.isdigit():
-            place_title = place_title_input + "号"
-        else:
-            messagebox.showerror("错误", f"无效的场地号: {place_title_input}")
-            return
-    else:
-        place_title = place_title_input  # 用户已经输入了“号”
+    place_title = normalize_place_title(place_title_input)
 
     # 验证场地号是否在映射中
     if place_title not in place_mapping:
@@ -216,10 +215,10 @@ def calculate_end_time(start_time):
     end_time_obj = start_time_obj + timedelta(hours=1)
     return end_time_obj.strftime("%H:%M")
 
-# 根据预约日期获取周几
+# 根据预约日期获取周几（周日为0）
 def get_week_day(order_date):
     date_obj = datetime.strptime(order_date, "%Y-%m-%d")
-    return (date_obj.weekday() + 1) % 7
+    return date_obj.weekday()
 
 # 检查时间段是否可预约
 def is_time_slot_available(week_day, start_time, end_time, interval_mapping):
@@ -373,7 +372,6 @@ def fetch_and_show_appointments():
 
             # 显示预约列表和可视化表格
             show_combined_window(gym_detail, gym_selection, gym_id)
-
         except Exception as e:
             messagebox.showerror("请求错误", f"请求失败: {e}")
 
@@ -390,7 +388,7 @@ def show_combined_window(gym_detail, gym_selection, gym_id):
     list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     # 自定义字段
-    fields_to_extract = ['gym_title', 'place_title', 'start_time', 'end_time','order_name', 'order_phone', 'uid', 'create_time']
+    fields_to_extract = ['order_name', 'order_date', 'place_title', 'start_time', 'end_time', 'order_phone', 'uid', 'create_time']
 
     # Treeview 表格
     global tree
@@ -428,29 +426,6 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
     # 获取从当前日期开始一周内的日期列表
     date_list = [(datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
 
-    # 构建场地列表
-    place_titles = []
-    for place in place_list:
-        title = place['title'].replace('场地', '').strip()
-        if not title.endswith('号'):
-            title += '号'
-        place_titles.append(title)
-
-    # 构建时间段列表，按照开始时间排序
-    def interval_sort_key(interval):
-        try:
-            start_time = datetime.strptime(interval['start_time'], "%H:%M")
-        except ValueError:
-            start_time = datetime.min
-        return start_time
-
-    interval_list.sort(key=interval_sort_key)
-    time_slots = []
-    for interval in interval_list:
-        time_slot = f"{interval['start_time']}-{interval['end_time']}"
-        if time_slot not in time_slots:
-            time_slots.append(time_slot)
-
     # 创建右侧的可视化框架
     visual_frame = tk.Frame(parent_window)
     visual_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
@@ -479,6 +454,12 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
     orders_cache = {}
     current_filter = None  # 当前的过滤条件
 
+    # 构建场地列表
+    place_titles = []
+    for place in place_list:
+        title = normalize_place_title(place.get('title', ''))
+        place_titles.append(title)
+
     # 更新预约列表的函数
     def update_appointments_list(orders_to_display):
         # 首先清空 Treeview
@@ -488,6 +469,8 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
         orders_to_display.sort(key=lambda order: (order.get('place_title', ''), order.get('start_time', '')))
         # 插入新的数据
         for order in orders_to_display:
+            # 统一处理 order['place_title']
+            order['place_title'] = normalize_place_title(order.get('place_title', ''))
             row = [order.get(field, "无数据") for field in fields_to_extract]
             tree.insert('', 'end', values=row, tags=('center',))
 
@@ -497,12 +480,39 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
         selected_date = selected_date_var.get()
         current_filter = None  # 重置过滤条件
 
+        # 计算 selected_date 的 week_day（周日为0）
+        date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
+        week_day = (date_obj.weekday() + 1) % 7
+        # print(week_day)
+        
+        
+        # 根据 week_day 过滤 interval_list
+        intervals_for_day = [interval for interval in interval_list if interval['week_day'] == week_day]
+
+        # 如果没有时间段，提示用户
+        if not intervals_for_day:
+            messagebox.showinfo("提示", f"{selected_date} 没有可用的时间段。")
+            return
+
+        # 构建时间段列表，按照开始时间排序
+        def interval_sort_key(interval):
+            try:
+                start_time = datetime.strptime(interval['start_time'], "%H:%M")
+            except ValueError:
+                start_time = datetime.min
+            return start_time
+
+        intervals_for_day.sort(key=interval_sort_key)
+        time_slots = []
+        for interval in intervals_for_day:
+            time_slot = f"{interval['start_time']}-{interval['end_time']}"
+            if time_slot not in time_slots:
+                time_slots.append(time_slot)
+
         # 如果缓存中没有该日期的订单，则从服务器获取
         if selected_date not in orders_cache:
             try:
-                response = requests.get(
-                    f"https://cgyy.xiaorankeji.com/index.php?s=/api/order/listForGymOrder&state=用户预约成功,待管理员审核&orderDate={selected_date}&gymId={gym_id}"
-                )
+                response = requests.get(f"https://cgyy.xiaorankeji.com/index.php?s=/api/order/listForGymOrder&state=用户预约成功,待管理员审核&orderDate={selected_date}&gymId={gym_id}")
                 response.raise_for_status()
                 data = response.json()
                 if 'data' in data and 'orderList' in data['data']:
@@ -516,7 +526,9 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
         else:
             day_orders = orders_cache[selected_date]
 
-        # **在此处对 day_orders 进行排序**
+        # **在此处对 day_orders 进行排序和处理**
+        for order in day_orders:
+            order['place_title'] = normalize_place_title(order.get('place_title', ''))
         day_orders.sort(key=lambda order: (order.get('place_title', ''), order.get('start_time', '')))
 
         # 更新左侧的预约列表
@@ -539,17 +551,12 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
 
         # 创建一个字典来查找已保留的时间段
         reserved_slots = {}
-        for interval in interval_list:
+        for interval in intervals_for_day:
             if interval['is_reserve'] == 1:
                 time_slot = f"{interval['start_time']}-{interval['end_time']}"
-                week_day = interval['week_day']
-                # 获取 selected_date 的周几
-                date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
-                date_week_day = (date_obj.weekday() + 1) % 7
-                if week_day == date_week_day:
-                    for place_title in place_titles:
-                        key = (place_title, time_slot)
-                        reserved_slots[key] = "已保留"
+                for place_title in place_titles:
+                    key = (place_title, time_slot)
+                    reserved_slots[key] = "已保留"
 
         # 定义单元格点击事件处理函数
         def cell_clicked(event, key):
@@ -574,13 +581,13 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
                 key = (place_title, time_slot)
                 if key in booked_slots:
                     status = "已预约"
-                    bg_color = "red"
+                    bg_color = "#808080"
                 elif key in reserved_slots:
                     status = "已保留"
-                    bg_color = "yellow"
+                    bg_color = "#FFCC99"
                 else:
                     status = "可以预约"
-                    bg_color = "green"
+                    bg_color = "#CCFFFF"
                 cell_label = tk.Label(table_frame, text=status, borderwidth=1, relief="solid", width=15, bg=bg_color)
                 cell_label.grid(row=row_index+1, column=col_index+1)
                 if status == "已预约":
