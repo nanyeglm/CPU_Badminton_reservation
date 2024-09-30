@@ -242,7 +242,7 @@ def get_interval_id(week_day, start_time, end_time, interval_mapping):
             return interval["Interval ID"]
     return None
 
-# 获取从当前日期加4天到加7天的日期列表
+# 获取从当前日期加0天到加6天的日期列表
 def get_available_dates():
     current_date = datetime.now()
     dates = [(current_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0, 7)]
@@ -377,6 +377,38 @@ def fetch_and_show_appointments():
 
     threading.Thread(target=fetch_data).start()
 
+# 定义 Tooltip 类
+class ToolTip(object):
+    """
+    Create a tooltip for a given widget
+    """
+    def __init__(self, widget, text='widget info'):
+        self.widget = widget
+        self.text = text
+        self.tipwindow = None
+
+    def showtip(self, text):
+        "Display text in tooltip window"
+        self.text = text
+        if self.tipwindow or not self.text:
+            return
+        x = y = 0
+        x = self.widget.winfo_pointerx() + 10
+        y = self.widget.winfo_pointery() + 10
+        self.tipwindow = tw = tk.Toplevel(self.widget)
+        tw.wm_overrideredirect(1)  # Remove window decorations
+        tw.wm_geometry("+%d+%d" % (x, y))
+        label = tk.Label(tw, text=self.text, justify=tk.LEFT,
+                      background="#ffffe0", relief=tk.SOLID, borderwidth=1,
+                      font=("tahoma", "12", "normal"))
+        label.pack(ipadx=1)
+
+    def hidetip(self):
+        tw = self.tipwindow
+        self.tipwindow = None
+        if tw:
+            tw.destroy()
+
 # 显示组合窗口
 def show_combined_window(gym_detail, gym_selection, gym_id):
     combined_window = tk.Toplevel(root)
@@ -482,7 +514,7 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
 
         # 计算 selected_date 的 week_day（周日为0）
         date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
-        week_day = (date_obj.weekday() + 1) % 7
+        week_day = date_obj.weekday()
         # print(week_day)
         
         
@@ -547,7 +579,7 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
         booked_slots = {}
         for order in day_orders:
             key = (order['place_title'], f"{order['start_time']}-{order['end_time']}")
-            booked_slots[key] = "已预约"
+            booked_slots[key] = order  # Store the entire order
 
         # 创建一个字典来查找已保留的时间段
         reserved_slots = {}
@@ -561,7 +593,7 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
         # 定义单元格点击事件处理函数
         def cell_clicked(event, key):
             nonlocal current_filter
-            if booked_slots.get(key) == "已预约":
+            if key in booked_slots:
                 if current_filter == key:
                     # 移除过滤，显示所有预约
                     current_filter = None
@@ -582,16 +614,29 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
                 if key in booked_slots:
                     status = "已预约"
                     bg_color = "#808080"
+                    # Get order info
+                    order_info = booked_slots[key]
+                    tooltip_text = f"{order_info.get('order_name', '')}\n{order_info.get('uid', '')}"
                 elif key in reserved_slots:
                     status = "已保留"
                     bg_color = "#FFCC99"
+                    tooltip_text = ""
                 else:
                     status = "可以预约"
                     bg_color = "#CCFFFF"
+                    tooltip_text = ""
                 cell_label = tk.Label(table_frame, text=status, borderwidth=1, relief="solid", width=15, bg=bg_color)
                 cell_label.grid(row=row_index+1, column=col_index+1)
                 if status == "已预约":
+                    # Bind tooltip events
+                    tooltip = ToolTip(cell_label, text=tooltip_text)
+                    cell_label.bind("<Enter>", lambda event, tooltip=tooltip: tooltip.showtip(tooltip.text))
+                    cell_label.bind("<Leave>", lambda event, tooltip=tooltip: tooltip.hidetip())
                     cell_label.bind("<Button-1>", lambda event, key=key: cell_clicked(event, key))
+                elif status == "已保留":
+                    cell_label.bind("<Button-1>", lambda event, key=key: cell_clicked(event, key))
+                else:
+                    pass  # Do nothing for "可以预约"
 
         # 更新 Canvas 大小
         table_frame.update_idletasks()
@@ -638,7 +683,7 @@ def init_app():
     order_phone_entry.grid(row=6, column=1)
 
     # 预约日期下拉框
-    available_dates = get_available_dates()  # 获取当前日期加4天到加7天的日期范围
+    available_dates = get_available_dates()  # 获取当前日期加0天到加6天的日期范围
     global order_date_combobox
     order_date_combobox = ttk.Combobox(root, values=available_dates, font=("Arial", 12), width=22)
     order_date_combobox.grid(row=4, column=1)
