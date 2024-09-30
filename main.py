@@ -1,11 +1,10 @@
 import requests
 import json
 from datetime import datetime, timedelta
-import random
-from faker import Faker
+import threading
 import tkinter as tk
 from tkinter import messagebox, ttk, Toplevel, Checkbutton, IntVar
-import threading
+from faker import Faker
 
 # 设置 Faker 实例，指定中文环境
 fake = Faker('zh_CN')
@@ -55,13 +54,15 @@ def fetch_gym_data(gym_ids):
                 detail = data['data']['detail']
                 gym_title = detail.get('title', '')
                 category_id = detail.get('category_id', '')
-                category_title = detail.get('category_title', '')  # Assuming API provides this
+                category_title = detail.get('category_title', '')  # 如果 API 提供此字段
                 store_id = detail.get('store_id', '')
 
                 # 构建 place_mapping
                 place_mapping = {}
                 for place in detail.get('placeList', []):
-                    place_title = place.get('title', '').replace('场地', '')
+                    place_title = place.get('title', '').replace('场地', '').strip()
+                    if not place_title.endswith('号'):
+                        place_title += '号'
                     place_id = place.get('place_id', '')
                     place_mapping[place_title] = place_id
 
@@ -248,13 +249,6 @@ def get_available_dates():
     dates = [(current_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(4, 8)]
     return dates
 
-# 显示加载窗口
-def show_loading_window():
-    loading_window = tk.Toplevel(root)
-    loading_window.title("加载中")
-    tk.Label(loading_window, text="请稍等，正在加载数据...").pack(pady=20, padx=20)
-    return loading_window
-
 # 筛选对话框
 def show_filter_dialog(tree, col, event):
     unique_values = set(tree.set(child, col) for child in tree.get_children(''))
@@ -367,96 +361,249 @@ def fetch_and_show_appointments():
 
     gym_id = gym_data["gym_id"]
 
-    url = f"https://cgyy.xiaorankeji.com/index.php?s=/api/order/listForGymOrder&state=用户预约成功,待管理员审核&orderDate={selected_date}&gymId={gym_id}"
-    
-    # 自定义字段
-    global fields_to_extract, original_data
-    fields_to_extract = ['order_name', 'place_title', 'start_time', 'end_time', 'order_phone', 'uid', 'create_time']
-
-    # 显示加载窗口
-    loading_window = show_loading_window()
-
+    # 无需显示加载窗口，直接获取数据
     def fetch_data():
         try:
-            response = requests.get(url)
-            response.raise_for_status()
-            data = response.json()
+            # 获取场馆详细信息
+            gym_detail_response = requests.get(
+                f"https://cgyy.xiaorankeji.com/index.php?s=/api/gym/detail&gymId={gym_id}"
+            )
+            gym_detail_response.raise_for_status()
+            gym_detail = gym_detail_response.json()['data']['detail']
 
-            if 'data' in data and 'orderList' in data['data']:
-                orders = data['data']['orderList']
-                loading_window.destroy()
-
-                result_window = tk.Toplevel(root)
-                result_window.title(f"{selected_date}的预约信息")
-                result_window.geometry("1920x1080")
-
-                # Treeview 表格
-                global tree
-                tree = ttk.Treeview(result_window, columns=fields_to_extract, show='headings')
-
-                # 设置表格标题，绑定列头点击事件
-                for field in fields_to_extract:
-                    tree.heading(field, text=field)
-
-                # 设置列内容居中
-                for field in fields_to_extract:
-                    tree.column(field, anchor="center", width=120)
-
-                # 绑定鼠标点击事件处理排序与筛选
-                tree.bind("<Button-1>", on_column_click)
-                tree.bind("<Button-3>", on_column_click)
-
-                # 设置标签居中显示
-                tree.tag_configure('center', anchor='center')
-
-                global original_data
-                original_data = orders
-
-                # **按照指定方式排序数据**
-                def sort_key(order):
-                    place_title = order.get('place_title', '')
-                    start_time_str = order.get('start_time', '')
-                    try:
-                        start_time = datetime.strptime(start_time_str, "%H:%M")
-                    except ValueError:
-                        start_time = datetime.min  # 处理无效的时间
-                    return (place_title, start_time)
-
-                orders.sort(key=sort_key)
-
-                # 插入数据到表格，并应用居中对齐的标签
-                for order in orders:
-                    row = [order.get(field, "无数据") for field in fields_to_extract]
-                    tree.insert('', 'end', values=row, tags=('center',))  # 应用居中标签
-
-                tree.pack(expand=True, fill=tk.BOTH)
-
-            else:
-                loading_window.destroy()
-                messagebox.showinfo("无数据", "该日期没有已预约信息。")
+            # 显示预约列表和可视化表格
+            show_combined_window(gym_detail, gym_selection, gym_id)
 
         except Exception as e:
-            loading_window.destroy()
             messagebox.showerror("请求错误", f"请求失败: {e}")
 
     threading.Thread(target=fetch_data).start()
 
+# 显示组合窗口
+def show_combined_window(gym_detail, gym_selection, gym_id):
+    combined_window = tk.Toplevel(root)
+    combined_window.title(f"{gym_selection}的预约信息")
+    combined_window.geometry("2560x1500")  # 设置窗口大小为 2560x2000
+
+    # 创建左侧的预约列表
+    list_frame = tk.Frame(combined_window)
+    list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # 自定义字段
+    fields_to_extract = ['gym_title', 'place_title', 'start_time', 'end_time','order_name', 'order_phone', 'uid', 'create_time']
+
+    # Treeview 表格
+    global tree
+    tree = ttk.Treeview(list_frame, columns=fields_to_extract, show='headings')
+    tree.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    # 设置表格标题，绑定列头点击事件
+    for field in fields_to_extract:
+        tree.heading(field, text=field)
+
+    # 设置列内容居中
+    for field in fields_to_extract:
+        tree.column(field, anchor="center", width=120)
+
+    # 绑定鼠标点击事件处理排序与筛选
+    tree.bind("<Button-1>", on_column_click)
+    tree.bind("<Button-3>", on_column_click)
+
+    # 设置标签居中显示
+    tree.tag_configure('center', anchor='center')
+
+    # 添加滚动条
+    scrollbar = ttk.Scrollbar(list_frame, orient=tk.VERTICAL, command=tree.yview)
+    tree.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+
+    # 创建右侧的可视化表格
+    visualize_booking_status(gym_detail, gym_selection, gym_id, combined_window, tree, fields_to_extract)
+
+# 可视化场地预约情况
+def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, tree, fields_to_extract):
+    place_list = gym_detail['placeList']
+    interval_list = gym_detail['intervalList']
+
+    # 获取从当前日期开始一周内的日期列表
+    date_list = [(datetime.now() + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(7)]
+
+    # 构建场地列表
+    place_titles = []
+    for place in place_list:
+        title = place['title'].replace('场地', '').strip()
+        if not title.endswith('号'):
+            title += '号'
+        place_titles.append(title)
+
+    # 构建时间段列表，按照开始时间排序
+    def interval_sort_key(interval):
+        try:
+            start_time = datetime.strptime(interval['start_time'], "%H:%M")
+        except ValueError:
+            start_time = datetime.min
+        return start_time
+
+    interval_list.sort(key=interval_sort_key)
+    time_slots = []
+    for interval in interval_list:
+        time_slot = f"{interval['start_time']}-{interval['end_time']}"
+        if time_slot not in time_slots:
+            time_slots.append(time_slot)
+
+    # 创建右侧的可视化框架
+    visual_frame = tk.Frame(parent_window)
+    visual_frame.pack(side=tk.RIGHT, fill=tk.BOTH, expand=True)
+
+    # 创建日期下拉框
+    selected_date_var = tk.StringVar()
+    selected_date_var.set(date_list[0])
+    date_menu = ttk.Combobox(visual_frame, textvariable=selected_date_var, values=date_list)
+    date_menu.pack()
+
+    # 创建表格框架
+    frame = tk.Frame(visual_frame)
+    frame.pack(fill=tk.BOTH, expand=True)
+
+    # 创建 Canvas 和 滚动条
+    canvas = tk.Canvas(frame)
+    scrollbar = ttk.Scrollbar(frame, orient=tk.VERTICAL, command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    scrollbar.pack(side=tk.RIGHT, fill=tk.Y)
+    canvas.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
+
+    table_frame = tk.Frame(canvas)
+    canvas.create_window((0, 0), window=table_frame, anchor='nw')
+
+    # 定义一个缓存，避免重复请求
+    orders_cache = {}
+    current_filter = None  # 当前的过滤条件
+
+    # 更新预约列表的函数
+    def update_appointments_list(orders_to_display):
+        # 首先清空 Treeview
+        for item in tree.get_children():
+            tree.delete(item)
+        # **在此处对 orders_to_display 进行排序**
+        orders_to_display.sort(key=lambda order: (order.get('place_title', ''), order.get('start_time', '')))
+        # 插入新的数据
+        for order in orders_to_display:
+            row = [order.get(field, "无数据") for field in fields_to_extract]
+            tree.insert('', 'end', values=row, tags=('center',))
+
+    # 更新表格内容
+    def update_table(*args):
+        nonlocal current_filter  # 需要修改外部变量
+        selected_date = selected_date_var.get()
+        current_filter = None  # 重置过滤条件
+
+        # 如果缓存中没有该日期的订单，则从服务器获取
+        if selected_date not in orders_cache:
+            try:
+                response = requests.get(
+                    f"https://cgyy.xiaorankeji.com/index.php?s=/api/order/listForGymOrder&state=用户预约成功,待管理员审核&orderDate={selected_date}&gymId={gym_id}"
+                )
+                response.raise_for_status()
+                data = response.json()
+                if 'data' in data and 'orderList' in data['data']:
+                    day_orders = data['data']['orderList']
+                else:
+                    day_orders = []
+                orders_cache[selected_date] = day_orders
+            except Exception as e:
+                messagebox.showerror("请求错误", f"请求失败: {e}")
+                return
+        else:
+            day_orders = orders_cache[selected_date]
+
+        # **在此处对 day_orders 进行排序**
+        day_orders.sort(key=lambda order: (order.get('place_title', ''), order.get('start_time', '')))
+
+        # 更新左侧的预约列表
+        update_appointments_list(day_orders)
+
+        # 清空表格内容
+        for widget in table_frame.winfo_children():
+            widget.destroy()
+
+        # 构建表格头部
+        tk.Label(table_frame, text="时间段/场地", borderwidth=1, relief="solid", width=15).grid(row=0, column=0)
+        for col_index, place_title in enumerate(place_titles):
+            tk.Label(table_frame, text=place_title, borderwidth=1, relief="solid", width=15).grid(row=0, column=col_index+1)
+
+        # 创建一个字典来快速查找已预约的时间段
+        booked_slots = {}
+        for order in day_orders:
+            key = (order['place_title'], f"{order['start_time']}-{order['end_time']}")
+            booked_slots[key] = "已预约"
+
+        # 创建一个字典来查找已保留的时间段
+        reserved_slots = {}
+        for interval in interval_list:
+            if interval['is_reserve'] == 1:
+                time_slot = f"{interval['start_time']}-{interval['end_time']}"
+                week_day = interval['week_day']
+                # 获取 selected_date 的周几
+                date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
+                date_week_day = (date_obj.weekday() + 1) % 7
+                if week_day == date_week_day:
+                    for place_title in place_titles:
+                        key = (place_title, time_slot)
+                        reserved_slots[key] = "已保留"
+
+        # 定义单元格点击事件处理函数
+        def cell_clicked(event, key):
+            nonlocal current_filter
+            if booked_slots.get(key) == "已预约":
+                if current_filter == key:
+                    # 移除过滤，显示所有预约
+                    current_filter = None
+                    update_appointments_list(day_orders)
+                else:
+                    # 应用过滤
+                    current_filter = key
+                    filtered_orders = [order for order in day_orders if (order['place_title'], f"{order['start_time']}-{order['end_time']}") == key]
+                    # **在此处对 filtered_orders 进行排序**
+                    filtered_orders.sort(key=lambda order: (order.get('place_title', ''), order.get('start_time', '')))
+                    update_appointments_list(filtered_orders)
+
+        # 填充表格内容
+        for row_index, time_slot in enumerate(time_slots):
+            tk.Label(table_frame, text=time_slot, borderwidth=1, relief="solid", width=15).grid(row=row_index+1, column=0)
+            for col_index, place_title in enumerate(place_titles):
+                key = (place_title, time_slot)
+                if key in booked_slots:
+                    status = "已预约"
+                    bg_color = "red"
+                elif key in reserved_slots:
+                    status = "已保留"
+                    bg_color = "yellow"
+                else:
+                    status = "可以预约"
+                    bg_color = "green"
+                cell_label = tk.Label(table_frame, text=status, borderwidth=1, relief="solid", width=15, bg=bg_color)
+                cell_label.grid(row=row_index+1, column=col_index+1)
+                if status == "已预约":
+                    cell_label.bind("<Button-1>", lambda event, key=key: cell_clicked(event, key))
+
+        # 更新 Canvas 大小
+        table_frame.update_idletasks()
+        canvas.config(scrollregion=canvas.bbox("all"))
+
+    # 当日期改变时，更新表格
+    selected_date_var.trace('w', lambda *args: threading.Thread(target=update_table).start())
+    threading.Thread(target=update_table).start()
+
 # 创建 Tkinter 界面
 root = tk.Tk()
-root.title("中国药科大学羽毛球场地预约系统")
+root.title("中国药科大学羽毛球场馆预约系统")
 
 # 设置窗口大小
 root.geometry("500x500")
 
-# 显示加载场馆数据的窗口
-loading_window = show_loading_window()
-
 def init_app():
     # 从 API 获取 gym_options 数据
     fetch_gym_data([10001, 10029])
-
-    # 关闭加载窗口
-    loading_window.destroy()
 
     # 创建输入标签和输入框
     tk.Label(root, text="请输入预约信息", font=("Arial", 16)).grid(row=0, column=1)
@@ -465,8 +612,8 @@ def init_app():
     tk.Label(root, text="场地号(例如:4)", font=("Arial", 12)).grid(row=2, column=0, padx=10, pady=10)
     tk.Label(root, text="开始时间(例如:19:00)", font=("Arial", 12)).grid(row=3, column=0, padx=10, pady=10)
     tk.Label(root, text="预约日期", font=("Arial", 12)).grid(row=4, column=0, padx=10, pady=10)
-    tk.Label(root, text="姓名(留空随机生成)", font=("Arial", 12)).grid(row=5, column=0, padx=10, pady=10)
-    tk.Label(root, text="联系电话(留空随机生成)", font=("Arial", 12)).grid(row=6, column=0, padx=10, pady=10)
+    tk.Label(root, text="姓名(可选)", font=("Arial", 12)).grid(row=5, column=0, padx=10, pady=10)
+    tk.Label(root, text="联系电话(可选)", font=("Arial", 12)).grid(row=6, column=0, padx=10, pady=10)
     tk.Label(root, text="场馆选择", font=("Arial", 12)).grid(row=7, column=0, padx=10, pady=10)
 
     # 输入框
