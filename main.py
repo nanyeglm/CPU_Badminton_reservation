@@ -245,7 +245,7 @@ def get_interval_id(week_day, start_time, end_time, interval_mapping):
 # 获取从当前日期加4天到加7天的日期列表
 def get_available_dates():
     current_date = datetime.now()
-    dates = [(current_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(4, 8)]
+    dates = [(current_date + timedelta(days=i)).strftime("%Y-%m-%d") for i in range(0, 7)]
     return dates
 
 # 筛选对话框
@@ -388,7 +388,7 @@ def show_combined_window(gym_detail, gym_selection, gym_id):
     list_frame.pack(side=tk.LEFT, fill=tk.BOTH, expand=True)
 
     # 自定义字段
-    fields_to_extract = ['order_name', 'order_date', 'place_title', 'start_time', 'end_time', 'order_phone', 'uid', 'create_time']
+    fields_to_extract = [ 'order_date', 'place_title', 'start_time', 'end_time', 'order_name', 'order_phone', 'uid', 'create_time']
 
     # Treeview 表格
     global tree
