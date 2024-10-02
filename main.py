@@ -82,7 +82,11 @@ def fetch_gym_data(gym_ids):
                         "End Time": interval.get('end_time', ''),
                         "is_reserve": interval.get('is_reserve', 1)
                     })
-
+                # # **Print interval_mapping here**
+                # print(f"\nInterval Mapping for gym '{gym_title}' (gym_id: {gym_id}):")
+                # for interval in interval_mapping:
+                #     print(interval)
+                    
                 gym_options[gym_title] = {
                     "gym_id": gym_id,
                     "gym_title": gym_title,
@@ -121,7 +125,6 @@ def submit_form():
     # 获取对应的 place_mapping 和 interval_mapping
     place_mapping = gym_data["place_mapping"]
     interval_mapping = gym_data["interval_mapping"]
-
     # 确保用户输入的场地号有效，并自动添加 "号"
     place_title = normalize_place_title(place_title_input)
 
@@ -185,10 +188,11 @@ def submit_form():
             "is_admin": ""
         }
     }
-
+    # print(data) # 打印请求数据
+    
     # 启动一个新线程来处理网络请求，避免 GUI 卡死
     threading.Thread(target=send_request, args=(data,)).start()
-
+    
 # 发送 POST 请求的函数
 def send_request(data):
     try:
@@ -218,7 +222,7 @@ def calculate_end_time(start_time):
 # 根据预约日期获取周几（周日为0）
 def get_week_day(order_date):
     date_obj = datetime.strptime(order_date, "%Y-%m-%d")
-    return date_obj.weekday()
+    return (date_obj.weekday() + 1) % 7
 
 # 检查时间段是否可预约
 def is_time_slot_available(week_day, start_time, end_time, interval_mapping):
@@ -514,7 +518,7 @@ def visualize_booking_status(gym_detail, gym_selection, gym_id, parent_window, t
 
         # 计算 selected_date 的 week_day（周日为0）
         date_obj = datetime.strptime(selected_date, "%Y-%m-%d")
-        week_day = date_obj.weekday()
+        week_day = (date_obj.weekday() + 1) % 7
         # print(week_day)
         
         
